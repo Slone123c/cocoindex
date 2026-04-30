@@ -11,6 +11,7 @@ from typing import (
     TypeAlias,
     overload,
 )
+import logging
 import threading
 import weakref
 from typing_extensions import TypeVar
@@ -27,6 +28,8 @@ from .serde import (
 )
 from .typing import NonExistenceType, StableKey
 
+
+_logger = logging.getLogger(__name__)
 
 ActionT = TypeVar("ActionT")
 ActionT_co = TypeVar("ActionT_co", covariant=True)
@@ -80,7 +83,19 @@ class _TypedTargetHandlerWrapper:
         prev_may_be_missing: bool,
         /,
     ) -> Any:
-        records = [r.get(self._deserializer) for r in prev_possible_records]
+        records = []
+        for r in prev_possible_records:
+            try:
+                records.append(r.get(self._deserializer))
+            except Exception as e:
+                # Stale/incompatible tracking record (e.g. after branch switch).
+                # Drop it and let the handler treat this entry as potentially new.
+                _logger.warning(
+                    "Failed to deserialize tracking record for key %r, treating as missing: %s",
+                    key,
+                    e,
+                )
+                prev_may_be_missing = True
         return self._handler.reconcile(key, desired, records, prev_may_be_missing)
 
     def attachments(self) -> dict[str, Any]:
